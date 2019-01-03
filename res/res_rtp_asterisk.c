@@ -6993,7 +6993,7 @@ static struct ast_frame *ast_rtp_read(struct ast_rtp_instance *instance, int rtc
 		}
 
 		return AST_LIST_FIRST(&frames);
-	} else if ((abs(seqno - rtp->expectedrxseqno) > 100) ||
+	} else if ((seqno - rtp->expectedrxseqno > 100) ||
 		ast_data_buffer_count(rtp->recv_buffer) == ast_data_buffer_max(rtp->recv_buffer)) {
 		int inserted = 0;
 

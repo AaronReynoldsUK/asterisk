@@ -106,7 +106,7 @@ static int check_header_fmt(FILE *f, int hsize, int hz)
 		ast_log(LOG_WARNING, "Read failed (freq)\n");
 		return -1;
 	}
-	freq = ltohl(freq);
+	// freq = ltohl(freq);
 	if ((freq != 8000 && freq != 16000) || freq != hz) {
 		ast_log(LOG_WARNING, "Unexpected frequency mismatch %d (expecting %d)\n", freq, hz);
 		return -1;
