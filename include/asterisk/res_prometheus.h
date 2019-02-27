@@ -57,7 +57,7 @@
  *
  * \note
  * Clearly, at some point, we should support summaries and histograms.
- * As an initial implementation, counters / gauages give us quite a
+ * As an initial implementation, counters / gauges give us quite a
  * bit of functionality.
  */
 enum prometheus_metric_type {

@@ -488,6 +488,7 @@ err500:
 	return 0;
 }
 
+<<<<<<< HEAD
 static void prometheus_general_config_dtor(void *obj)
 {
 	struct prometheus_general_config *config = obj;
@@ -537,6 +538,8 @@ static void *module_config_alloc(void)
 	return config;
 }
 
+=======
+>>>>>>> Stage again
 static struct ast_http_uri prometheus_uri = {
 	.description = "Prometheus Metrics URI",
 	.uri = "metrics",
