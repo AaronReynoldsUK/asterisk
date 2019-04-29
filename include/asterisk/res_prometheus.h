@@ -27,7 +27,6 @@
  * This module provides the base APIs and functionality for exposing a
  * metrics route in Asterisk's HTTP server suitable for consumption by
  * a Prometheus server. It does not provide any metrics itself.
- *
  */
 
 #include "asterisk/lock.h"
@@ -56,9 +55,10 @@
 /*!
  * \brief Prometheus metric type
  *
+ * \note
  * Clearly, at some point, we should support summaries and histograms.
  * As an initial implementation, counters / gauages give us quite a
- * bit.
+ * bit of functionality.
  */
 enum prometheus_metric_type {
 	/*!
@@ -74,7 +74,7 @@ enum prometheus_metric_type {
 /*!
  * \brief How the metric was allocated.
  *
- * Clearly, you don't want to get this wrong.
+ * \note Clearly, you don't want to get this wrong.
  */
 enum prometheus_metric_allocation_strategy {
 	/*!
@@ -104,6 +104,7 @@ struct prometheus_label {
 /*!
  * \brief An actual, honest to god, metric.
  *
+ * \details
  * A bit of effort has gone into making this structure as efficient as we
  * possibly can. Given that a *lot* of metrics can theoretically be dumped out,
  * and that Asterisk attempts to be a "real-time" system, we want this process
@@ -161,17 +162,23 @@ struct prometheus_metric {
 	/*!
 	 * \brief The current value.
 	 *
+	 * \details
 	 * If \c get_metric_value is set, this value is ignored until the callback
 	 * happens
 	 */
 	char value[PROMETHEUS_MAX_VALUE_LENGTH];
 	/*
-	 * \brief If updates need to happen when the metric is gathered, provide the
-	 * callback function
+	 * \brief Callback function to obtain the metric value
+	 * \details
+	 * If updates need to happen when the metric is gathered, provide the
+	 * callback function. Otherwise, leave it \c NULL.
 	 */
 	void (* get_metric_value)(struct prometheus_metric *metric);
 	/*!
-	 * \brief Children metrics have the same name but different label.
+	 * \brief A list of children metrics
+	 * \details
+	 * Children metrics have the same name but different label.
+	 *
 	 * Registration of a metric will automatically nest the metrics; otherwise
 	 * they are treated independently.
 	 *
@@ -186,6 +193,36 @@ struct prometheus_metric {
 	AST_LIST_ENTRY(prometheus_metric) entry;
 };
 
+/**
+ * \brief Convenience macro for initializing a metric on the stack
+ *
+ * \param mtype The metric type. See \c prometheus_metric_type
+ * \param n Name of the metric
+ * \param h Help text for the metric
+ * \param cb Callback function. Optional; may be \c NULL
+ *
+ * \details
+ * When initializing a metric on the stack, various fields have to be provided
+ * to initialize the metric correctly. This macro can be used to simplify the
+ * process.
+ *
+ * Example Usage:
+ * \code
+ *	struct prometheus_metric test_counter_one =
+ *		PROMETHEUS_METRIC_STATIC_INITIALIZATION(
+ *			PROMETHEUS_METRIC_COUNTER,
+ *			"test_counter_one",
+ *			"A test counter",
+ *			NULL);
+ *	struct prometheus_metric test_counter_two =
+ * 		PROMETHEUS_METRIC_STATIC_INITIALIZATION(
+ *			PROMETHEUS_METRIC_COUNTER,
+ *			"test_counter_two",
+ *			"A test counter",
+ *			metric_values_get_counter_value_cb);
+ * \endcode
+ *
+ */
 #define PROMETHEUS_METRIC_STATIC_INITIALIZATION(mtype, n, h, cb) { \
 	.type = (mtype), \
 	.allocation_strategy = PROMETHEUS_METRIC_ALLOCD, \
@@ -198,6 +235,27 @@ struct prometheus_metric {
 
 /**
  * \brief Convenience macro for setting a label / value in a metric
+ *
+ * \param metric The metric to set the label on
+ * \param label Position of the label to set
+ * \param n Name of the label
+ * \param v Value of the label
+ *
+ * \details
+ * When creating nested metrics, it's helpful to set their label after they have
+ * been declared but before they have been registered. This macro acts as a
+ * convenience function to set the labels properly on a declared metric.
+ *
+ * \note Setting labels *after* registration will lead to a "bad time"
+ *
+ * Example Usage:
+ * \code
+ *	PROMETHEUS_METRIC_SET_LABEL(
+ *		test_gauge_child_two, 0, "key_one", "value_two");
+ *	PROMETHEUS_METRIC_SET_LABEL(
+ *		test_gauge_child_two, 1, "key_two", "value_two");
+ * \endcode
+ *
  */
 #define PROMETHEUS_METRIC_SET_LABEL(metric, label, n, v) do { \
 	ast_assert((label) < PROMETHEUS_MAX_LABELS); \
@@ -255,6 +313,7 @@ void prometheus_metric_to_string(struct prometheus_metric *metric,
 /*!
  * \brief Defines a callback that will be invoked when the HTTP route is called
  *
+ * \details
  * This callback presents the second way of passing metrics to a Prometheus
  * server. For metrics that are generated often or whose value needs to be
  * stored, metrics can be created and registered. For metrics that can be
@@ -262,10 +321,37 @@ void prometheus_metric_to_string(struct prometheus_metric *metric,
  * queried by promtheus, the registered callbacks are invoked. The string passed
  * to the callback should be populated with stack-allocated metrics using
  * \c prometheus_metric_to_string.
+ *
+ * Example Usage:
+ * \code
+ *	static void prometheus_metric_callback(struct ast_str **output)
+ *	{
+ *		struct prometheus_metric test_counter =
+ *			PROMETHEUS_METRIC_STATIC_INITIALIZATION(
+ *				PROMETHEUS_METRIC_COUNTER,
+ *				"test_counter",
+ *				"A test counter",
+ *				NULL);
+ *
+ *		prometheus_metric_to_string(&test_counter, output);
+ *	}
+ *
+ *	static void load_module(void)
+ *	{
+ *		struct prometheus_callback callback = {
+ *			.name = "test_callback",
+ *			.callback_fn = &prometheus_metric_callback,
+ *		};
+ *
+ *		prometheus_callback_register(&callback);
+ *	}
+ *
+ * \endcode
+ *
  */
 struct prometheus_callback {
 	/*!
-	 * \brief The name of our callback, because why not
+	 * \brief The name of our callback (always useful for debugging)
 	 */
 	const char *name;
 	/*!
