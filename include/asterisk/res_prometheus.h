@@ -1,7 +1,7 @@
 /*
  * res_prometheus: Asterisk Prometheus Metrics
  *
- * Copyright (C) 2018 Digium, Inc.
+ * Copyright (C) 2019 Sangoma, Inc.
  *
  * Matt Jordan <mjordan@digium.com>
  *

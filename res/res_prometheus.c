@@ -1,7 +1,7 @@
 /*
  * Asterisk -- An open source telephony toolkit.
  *
- * Copyright (C) 2019 Digium, Inc.
+ * Copyright (C) 2019 Sangoma, Inc.
  *
  * Matt Jordan <mjordan@digium.com>
  *
