@@ -28,6 +28,40 @@
 	<support_level>extended</support_level>
  ***/
 
+/*** DOCUMENTATION
+	<configInfo name="res_prometheus" language="en_US">
+		<synopsis>Resource for integration with Prometheus</synopsis>
+		<configFile name="prometheus.conf">
+			<configObject name="general">
+				<synopsis>General settings.</synopsis>
+				<description>
+					<para>
+					The <emphasis>general</emphasis> settings section contains information
+					to configure Asterisk to serve up statistics for a Prometheus server.
+					</para>
+					<note>
+						<para>You must enable Asterisk's HTTP server in <filename>http.conf</filename>
+						for this module to function properly!
+						</para>
+					</note>
+				</description>
+				<configOption name="enabled" default="yes">
+					<synopsis>Enable or disable Prometheus statistics.</synopsis>
+					<description>
+						<enumlist>
+							<enum name="no" />
+							<enum name="yes" />
+						</enumlist>
+					</description>
+				</configOption>
+				<configOption name="uri" default="metrics">
+					<synopsis>The HTTP URI to serve metrics up on.</synopsis>
+				</configOption>
+			</configObject>
+		</configFile>
+	</configInfo>
+***/
+
 #define AST_MODULE_SELF_SYM __internal_res_prometheus_self
 
 #include "asterisk.h"
@@ -35,6 +69,7 @@
 #include "asterisk/module.h"
 #include "asterisk/vector.h"
 #include "asterisk/http.h"
+#include "asterisk/config_options.h"
 #include "asterisk/res_prometheus.h"
 
 AST_MUTEX_DEFINE_STATIC(metrics_lock);
@@ -44,6 +79,45 @@ AST_VECTOR(, struct prometheus_metric *) metrics;
 AST_MUTEX_DEFINE_STATIC(callbacks_lock);
 
 AST_VECTOR(, struct prometheus_callback *) callbacks;
+
+struct prometheus_general_config {
+	/*! \brief Whether or not the module is enabled */
+	unsigned int enabled;
+	/*! \brief The HTTP URI we register ourselves to */
+	AST_DECLARE_STRING_FIELDS(
+		AST_STRING_FIELD(uri);
+	);
+};
+
+/*! \brief The actual module config */
+struct module_config {
+	/*! \brief General settings */
+	struct prometheus_general_config *general;
+};
+
+static struct aco_type global_option = {
+	.type = ACO_GLOBAL,
+	.name = "general",
+	.item_offset = offsetof(struct module_config, general),
+	.category_match = ACO_WHITELIST_EXACT,
+	.category = "general",
+};
+
+struct aco_type *global_options[] = ACO_TYPES(&global_option);
+
+struct aco_file prometheus_conf = {
+	.filename = "prometheus.conf",
+	.types = ACO_TYPES(&global_option),
+};
+
+/*! \brief The module configuration container */
+static AO2_GLOBAL_OBJ_STATIC(global_config);
+
+static void *module_config_alloc(void);
+/*! \brief Register information about the configs being processed by this module */
+CONFIG_INFO_STANDARD(cfg_info, global_config, module_config_alloc,
+	.files = ACO_FILES(&prometheus_conf),
+);
 
 /**
  * \internal
@@ -414,6 +488,55 @@ err500:
 	return 0;
 }
 
+static void prometheus_general_config_dtor(void *obj)
+{
+	struct prometheus_general_config *config = obj;
+
+	ast_string_field_free_memory(config);
+}
+
+/*! \brief General configuration object allocation */
+static void *prometheus_general_config_alloc(void)
+{
+	struct prometheus_general_config *config;
+
+	config = ao2_alloc(sizeof(*config), prometheus_general_config_dtor);
+	if (!config || ast_string_field_init(config, 32)) {
+		return NULL;
+	}
+
+	return config;
+}
+
+/*! \brief Configuration object destructor */
+static void module_config_dtor(void *obj)
+{
+	struct module_config *config = obj;
+
+	if (config->general) {
+		ao2_ref(config->general, -1);
+	}
+}
+
+/*! \brief Module config constructor */
+static void *module_config_alloc(void)
+{
+	struct module_config *config;
+
+	config = ao2_alloc(sizeof(*config), module_config_dtor);
+	if (!config) {
+		return NULL;
+	}
+
+	config->general = prometheus_general_config_alloc();
+	if (!config->general) {
+		ao2_ref(config, -1);
+		config = NULL;
+	}
+
+	return config;
+}
+
 static struct ast_http_uri prometheus_uri = {
 	.description = "Prometheus Metrics URI",
 	.uri = "metrics",
@@ -437,12 +560,18 @@ static int unload_module(void)
 	}
 	AST_VECTOR_FREE(&metrics);
 
+	aco_info_destroy(&cfg_info);
+
 	return 0;
 }
 
 static int load_module(void)
 {
 	SCOPED_MUTEX(lock, &metrics_lock);
+
+	if (aco_info_init(&cfg_info)) {
+		goto cleanup;
+	}
 
 	if (AST_VECTOR_INIT(&metrics, 64)) {
 		goto cleanup;
@@ -455,8 +584,9 @@ static int load_module(void)
 	return AST_MODULE_LOAD_SUCCESS;
 
 cleanup:
-	AST_VECTOR_FREE(&metrics);
 	ast_http_uri_unlink(&prometheus_uri);
+	AST_VECTOR_FREE(&metrics);
+	aco_info_destroy(&cfg_info);
 
 	return AST_MODULE_LOAD_DECLINE;
 }
