@@ -95,7 +95,7 @@ static void metric_values_get_counter_value_cb(struct prometheus_metric *metric)
 AST_TEST_DEFINE(metric_values)
 {
 	RAII_VAR(CURL *, curl, NULL, curl_free_wrapper);
-	RAII_VAR(struct ast_str *, buffer, NULL, ast_free);
+	struct ast_str *buffer;
 	int res;
 	struct prometheus_metric test_counter_one = PROMETHEUS_METRIC_STATIC_INITIALIZATION(
 		PROMETHEUS_METRIC_COUNTER,
@@ -136,6 +136,7 @@ AST_TEST_DEFINE(metric_values)
 
 	curl = get_curl_instance();
 	if (!curl) {
+		ast_free(buffer);
 		return AST_TEST_NOT_RUN;
 	}
 
@@ -144,6 +145,7 @@ AST_TEST_DEFINE(metric_values)
 	res = curl_easy_perform(curl);
 	if (res != CURLE_OK) {
 		ast_test_status_update(test, "Failed to execute CURL: %d\n", res);
+		ast_free(buffer);
 		return AST_TEST_FAIL;
 	}
 
@@ -158,6 +160,7 @@ AST_TEST_DEFINE(metric_values)
 
 	prometheus_metric_unregister(&test_counter_one);
 	prometheus_metric_unregister(&test_counter_two);
+	ast_free(buffer);
 
 	return AST_TEST_PASS;
 }
