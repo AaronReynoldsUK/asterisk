@@ -494,6 +494,7 @@ static int process_config(int reload)
 
 	config = ast_config_load("http.conf", config_flags);
 	if (!config || config == CONFIG_STATUS_FILEINVALID) {
+		ast_log(AST_LOG_NOTICE, "HTTP config file is invalid; declining load");
 		return -1;
 	} else if (config == CONFIG_STATUS_FILEUNCHANGED) {
 		return 0;
@@ -502,6 +503,7 @@ static int process_config(int reload)
 	enabled = ast_config_option(config, "general", "enabled");
 	if (!enabled || ast_false(enabled)) {
 		ast_config_destroy(config);
+		ast_log(AST_LOG_NOTICE, "HTTP server is disabled; declining load");
 		return -1;
 	}
 
@@ -509,6 +511,7 @@ static int process_config(int reload)
 	bindaddr = ast_config_option(config, "general", "bindaddr");
 	if (!bindaddr) {
 		ast_config_destroy(config);
+		ast_log(AST_LOG_NOTICE, "HTTP config file fails to specify 'bindaddr'; declining load");
 		return -1;
 	}
 
