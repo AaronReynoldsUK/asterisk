@@ -80,15 +80,6 @@ AST_MUTEX_DEFINE_STATIC(callbacks_lock);
 
 AST_VECTOR(, struct prometheus_callback *) callbacks;
 
-struct prometheus_general_config {
-	/*! \brief Whether or not the module is enabled */
-	unsigned int enabled;
-	/*! \brief The HTTP URI we register ourselves to */
-	AST_DECLARE_STRING_FIELDS(
-		AST_STRING_FIELD(uri);
-	);
-};
-
 /*! \brief The actual module config */
 struct module_config {
 	/*! \brief General settings */
@@ -495,8 +486,7 @@ static void prometheus_general_config_dtor(void *obj)
 	ast_string_field_free_memory(config);
 }
 
-/*! \brief General configuration object allocation */
-static void *prometheus_general_config_alloc(void)
+void *prometheus_general_config_alloc(void)
 {
 	struct prometheus_general_config *config;
 
@@ -507,6 +497,29 @@ static void *prometheus_general_config_alloc(void)
 
 	return config;
 }
+
+struct prometheus_general_config *prometheus_general_config_get(void)
+{
+	RAII_VAR(struct module_config *, mod_cfg, ao2_global_obj_ref(global_config), ao2_cleanup);
+
+	if (!mod_cfg) {
+		return NULL;
+	}
+	ao2_bump(mod_cfg->general);
+
+	return mod_cfg->general;
+}
+
+void prometheus_general_config_set(struct prometheus_general_config *config)
+{
+	RAII_VAR(struct module_config *, mod_cfg, ao2_global_obj_ref(global_config), ao2_cleanup);
+
+	if (!mod_cfg) {
+		return;
+	}
+	ao2_replace(mod_cfg->general, config);
+}
+
 
 /*! \brief Configuration object destructor */
 static void module_config_dtor(void *obj)

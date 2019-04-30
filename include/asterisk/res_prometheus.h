@@ -31,6 +31,7 @@
 
 #include "asterisk/lock.h"
 #include "asterisk/linkedlists.h"
+#include "asterisk/stringfields.h"
 
 /*!
  * \brief How many labels a single metric can have
@@ -51,6 +52,28 @@
  * \brief How large of a value we can store
  */
 #define PROMETHEUS_MAX_VALUE_LENGTH 32
+
+/**
+ * \brief Prometheus general configuration
+ *
+ * \details
+ * While the config file should generally provide the configuration
+ * for this module, it is useful for testing purposes to allow the
+ * configuration to be injected into the module. This struct is
+ * public to allow this to occur.
+ *
+ * \note
+ * Modifying the configuration outside of testing purposes is not
+ * encouraged.
+ */
+struct prometheus_general_config {
+	/*! \brief Whether or not the module is enabled */
+	unsigned int enabled;
+	/*! \brief The HTTP URI we register ourselves to */
+	AST_DECLARE_STRING_FIELDS(
+		AST_STRING_FIELD(uri);
+	);
+};
 
 /*!
  * \brief Prometheus metric type
@@ -400,5 +423,43 @@ int prometheus_callback_register(struct prometheus_callback *callback);
  * \param callback The callback to unregister
  */
 void prometheus_callback_unregister(struct prometheus_callback *callback);
+
+/*!
+ * \brief Retrieve the current configuration of the module
+ *
+ * \note
+ * This should primarily be done for testing purposes.
+ *
+ * \details
+ * config is an AO2 ref counted object
+ *
+ * \retval NULL on error
+ * \retval config on success
+ */
+struct prometheus_general_config *prometheus_general_config_get(void);
+
+/*!
+ * \brief Set the configuration for the module
+ *
+ * \note
+ * This should primarily be done for testing purposes
+ *
+ * \details
+ * This is not a ref-stealing function. The reference count to \c config
+ * will be incremented as a result of calling this method.
+ *
+ */
+void prometheus_general_config_set(struct prometheus_general_config *config);
+
+/*!
+ * \brief Allocate a new configuration object
+ *
+ * \details
+ * The returned object is an AO2 ref counted object
+ *
+ * \retval NULL on error
+ * \retval config on success
+ */
+void *prometheus_general_config_alloc(void);
 
 #endif /* #ifndef RES_PROMETHEUS_H__ */
