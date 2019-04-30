@@ -1,0 +1,33 @@
+;
+; res_prometheus Module configuration for Asterisk
+;
+
+;
+; Note that this configuration file is consumed by res_prometheus, which
+; provides core functionality for serving up Asterisk statistics to a
+; Prometheus server. By default, this only includes basic information about
+; the Asterisk instance that is running. Additional modules can be loaded to
+; provide specific statistics. In all cases, configuration of said statistics
+; is done through this configuration file.
+;
+; Because Prometheus scrapes statistics from HTTP servers, this module requires
+; Asterisk's built-in HTTP server to be enabled and configured properly.
+;
+
+; Settings that affect all statistic generation
+[general]
+enabled = no                      ; Enable/disable all statistic generation.
+                                  ; Default is "no". Note that if Asterisk's
+                                  ; HTTP server is disabled, this setting
+                                  ; won't matter.
+uri = metrics                     ; The HTTP route to expose metrics on.
+                                  ; Default is "metrics".
+
+
+[channels]
+
+[bridges]
+
+[endpoints]
+
+[pjsip]
