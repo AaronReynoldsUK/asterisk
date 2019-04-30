@@ -72,7 +72,7 @@ static CURL *get_curl_instance(void)
 
 static size_t curl_write_string_callback(void *contents, size_t size, size_t nmemb, void *userdata)
 {
-	struct ast_str *buffer = userdata;
+	struct ast_str **buffer = userdata;
 	size_t realsize = size * nmemb;
 	char *rawdata;
 
@@ -81,7 +81,8 @@ static size_t curl_write_string_callback(void *contents, size_t size, size_t nme
 		return 0;
 	}
 	memcpy(rawdata, contents, realsize);
-	ast_str_append(&buffer, 0, "%s", rawdata);
+	rawdata[realsize] = 0;
+	ast_str_append(buffer, 0, "%s", rawdata);
 	ast_free(rawdata);
 
 	return realsize;
@@ -95,7 +96,7 @@ static void metric_values_get_counter_value_cb(struct prometheus_metric *metric)
 AST_TEST_DEFINE(metric_values)
 {
 	RAII_VAR(CURL *, curl, NULL, curl_free_wrapper);
-	struct ast_str *buffer;
+	RAII_VAR(struct ast_str *, buffer, NULL, ast_free);
 	int res;
 	struct prometheus_metric test_counter_one = PROMETHEUS_METRIC_STATIC_INITIALIZATION(
 		PROMETHEUS_METRIC_COUNTER,
@@ -136,31 +137,27 @@ AST_TEST_DEFINE(metric_values)
 
 	curl = get_curl_instance();
 	if (!curl) {
-		ast_free(buffer);
 		return AST_TEST_NOT_RUN;
 	}
 
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_string_callback);
-	curl_easy_setopt(curl, CURLOPT_WRITEDATA, buffer);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 	res = curl_easy_perform(curl);
 	if (res != CURLE_OK) {
 		ast_test_status_update(test, "Failed to execute CURL: %d\n", res);
-		ast_free(buffer);
 		return AST_TEST_FAIL;
 	}
 
-	ast_test_validate(test, ast_str_buffer(buffer),
+	ast_test_validate(test, strcmp(ast_str_buffer(buffer),
 		"# HELP test_counter_one A test counter\n"
 		"# TYPE test_counter_one counter\n"
 		"test_counter_one 1\n"
 		"# HELP test_counter_two A test counter\n"
 		"# TYPE test_counter_two counter\n"
-		"test_counter_two 2\n"
-		"\n\n");
+		"test_counter_two 2\n") == 0);
 
 	prometheus_metric_unregister(&test_counter_one);
 	prometheus_metric_unregister(&test_counter_two);
-	ast_free(buffer);
 
 	return AST_TEST_PASS;
 }
@@ -215,18 +212,17 @@ AST_TEST_DEFINE(metric_callback_register)
 	}
 
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_string_callback);
-	curl_easy_setopt(curl, CURLOPT_WRITEDATA, buffer);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 	res = curl_easy_perform(curl);
 	if (res != CURLE_OK) {
 		ast_test_status_update(test, "Failed to execute CURL: %d\n", res);
 		return AST_TEST_FAIL;
 	}
 
-	ast_test_validate(test, ast_str_buffer(buffer),
+	ast_test_validate(test, strcmp(ast_str_buffer(buffer),
 		"# HELP test_counter A test counter\n"
 		"# TYPE test_counter counter\n"
-		"test_counter 0\n"
-		"\n\n");
+		"test_counter 0\n") == 0);
 
 	prometheus_callback_unregister(&callback);
 
@@ -357,13 +353,12 @@ AST_TEST_DEFINE(counter_to_string)
 	AST_LIST_INSERT_TAIL(&test_counter.children, &test_counter_child_one, entry);
 	AST_LIST_INSERT_TAIL(&test_counter.children, &test_counter_child_two, entry);
 	prometheus_metric_to_string(&test_counter, &buffer);
-	ast_test_validate(test, ast_str_buffer(buffer),
+	ast_test_validate(test, strcmp(ast_str_buffer(buffer),
 		"# HELP test_counter A test counter\n"
 		"# TYPE test_counter counter\n"
 		"test_counter 0\n"
 		"test_counter{key_one=\"value_one\",key_two=\"value_one\"} 0\n"
-		"test_counter{key_one=\"value_two\",key_two=\"value_two\"} 0\n"
-		"\n");
+		"test_counter{key_one=\"value_two\",key_two=\"value_two\"} 0\n") == 0);
 
 	return AST_TEST_PASS;
 }
@@ -442,13 +437,12 @@ AST_TEST_DEFINE(gauge_to_string)
 	AST_LIST_INSERT_TAIL(&test_gauge.children, &test_gauge_child_one, entry);
 	AST_LIST_INSERT_TAIL(&test_gauge.children, &test_gauge_child_two, entry);
 	prometheus_metric_to_string(&test_gauge, &buffer);
-	ast_test_validate(test, ast_str_buffer(buffer),
+	ast_test_validate(test, strcmp(ast_str_buffer(buffer),
 		"# HELP test_gauge A test gauge\n"
 		"# TYPE test_gauge gauge\n"
 		"test_gauge 0\n"
 		"test_gauge{key_one=\"value_one\",key_two=\"value_one\"} 0\n"
-		"test_gauge{key_one=\"value_two\",key_two=\"value_two\"} 0\n"
-		"\n");
+		"test_gauge{key_one=\"value_two\",key_two=\"value_two\"} 0\n") == 0);
 
 	return AST_TEST_PASS;
 }
