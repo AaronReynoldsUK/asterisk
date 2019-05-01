@@ -36,6 +36,8 @@
 
 static char server_uri[512];
 
+struct prometheus_general_config *module_config;
+
 static void curl_free_wrapper(void *ptr)
 {
 	if (!ptr) {
@@ -498,6 +500,76 @@ AST_TEST_DEFINE(gauge_create)
 	return AST_TEST_PASS;
 }
 
+AST_TEST_DEFINE(config_general_basic_auth)
+{
+	switch (cmd) {
+	case TEST_INIT:
+		info->name = __func__;
+		info->category = CATEGORY;
+		info->summary = "Test basic auth handling";
+		info->description =
+			"This test covers authentication of requests";
+		return AST_TEST_NOT_RUN;
+	case TEST_EXECUTE:
+		break;
+	}
+
+	return AST_TEST_NOT_RUN;
+}
+
+AST_TEST_DEFINE(config_general_enabled)
+{
+	RAII_VAR(CURL *, curl, NULL, curl_free_wrapper);
+	RAII_VAR(struct ast_str *, buffer, NULL, ast_free);
+	int res;
+	long response_code;
+
+	switch (cmd) {
+	case TEST_INIT:
+		info->name = __func__;
+		info->category = CATEGORY;
+		info->summary = "Test handling of enable/disable";
+		info->description =
+			"When disabled, the module should return a 503.\n"
+			"This test verifies that it actually occurs.";
+		return AST_TEST_NOT_RUN;
+	case TEST_EXECUTE:
+		break;
+	}
+
+	module_config->enabled = 0;
+
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_string_callback);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
+	res = curl_easy_perform(curl);
+	if (res != CURLE_OK) {
+		ast_test_status_update(test, "Failed to execute CURL: %d\n", res);
+		return AST_TEST_FAIL;
+	}
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+	ast_test_validate(test, response_code == 503);
+
+	return AST_TEST_PASS;
+}
+
+AST_TEST_DEFINE(config_general_core_metrics)
+{
+	switch (cmd) {
+	case TEST_INIT:
+		info->name = __func__;
+		info->category = CATEGORY;
+		info->summary = "Test producing core metrics";
+		info->description =
+			"This test covers the core metrics that are produced\n"
+			"by the basic Prometheus module.";
+		return AST_TEST_NOT_RUN;
+	case TEST_EXECUTE:
+		break;
+	}
+
+	return AST_TEST_NOT_RUN;
+}
+
 static int process_config(int reload)
 {
 	struct ast_config *config;
@@ -543,8 +615,6 @@ static int process_config(int reload)
 
 	return 0;
 }
-
-struct prometheus_general_config *module_config;
 
 static int test_init_cb(struct ast_test_info *info, struct ast_test *test)
 {
@@ -593,6 +663,10 @@ static int unload_module(void)
 	AST_TEST_UNREGISTER(gauge_to_string);
 	AST_TEST_UNREGISTER(gauge_create);
 
+	AST_TEST_UNREGISTER(config_general_enabled);
+	AST_TEST_UNREGISTER(config_general_basic_auth);
+	AST_TEST_UNREGISTER(config_general_core_metrics);
+
 	return 0;
 }
 
@@ -610,6 +684,10 @@ static int load_module(void)
 	AST_TEST_REGISTER(counter_create);
 	AST_TEST_REGISTER(gauge_to_string);
 	AST_TEST_REGISTER(gauge_create);
+
+	AST_TEST_REGISTER(config_general_enabled);
+	AST_TEST_REGISTER(config_general_basic_auth);
+	AST_TEST_REGISTER(config_general_core_metrics);
 
 	ast_test_register_init(CATEGORY, &test_init_cb);
 	ast_test_register_cleanup(CATEGORY, &test_cleanup_cb);
