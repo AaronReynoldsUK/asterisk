@@ -702,6 +702,7 @@ void prometheus_general_config_set(struct prometheus_general_config *config)
 		return;
 	}
 	ao2_replace(mod_cfg->general, config);
+	prometheus_config_post_apply();
 }
 
 
