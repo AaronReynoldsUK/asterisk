@@ -487,7 +487,7 @@ static int http_callback(struct ast_tcptls_session_instance *ser,
 	struct ast_variable *get_params, struct ast_variable *headers)
 {
 	RAII_VAR(struct module_config *, mod_cfg, ao2_global_obj_ref(global_config), ao2_cleanup);
-	RAII_VAR(struct ast_str *, response, NULL, ast_free);
+	struct ast_str *response = NULL;
 	int i;
 
 	/* If there is no module config or we're not enabled, we can't handle requests */
@@ -569,12 +569,15 @@ err401:
 		/* ast_http_send takes ownership of the ast_str */
 		ast_http_send(ser, method, 401, "Unauthorized", auth_challenge_headers, NULL, 0, 1);
 	}
-	return 0;
-err500:
-	ast_http_send(ser, method, 500, "Server Error", NULL, NULL, 0, 1);
+	ast_free(response);
 	return 0;
 err503:
 	ast_http_send(ser, method, 503, "Service Unavailable", NULL, NULL, 0, 1);
+	ast_free(response);
+	return 0;
+err500:
+	ast_http_send(ser, method, 500, "Server Error", NULL, NULL, 0, 1);
+	ast_free(response);
 	return 0;
 }
 
