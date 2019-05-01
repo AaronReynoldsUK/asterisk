@@ -405,8 +405,13 @@ int prometheus_metric_register(struct prometheus_metric *metric);
  * \brief Remove a registered metric
  *
  * \param metric The metric to unregister
+ *
+ * \note Unregistering also destroys the metric, if found
+ *
+ * \retval 0 The metric was found, unregistered, and disposed of
+ * \retval -1 The metric was not found
  */
-void prometheus_metric_unregister(struct prometheus_metric *metric);
+int prometheus_metric_unregister(struct prometheus_metric *metric);
 
 /*!
  * The current number of registered metrics

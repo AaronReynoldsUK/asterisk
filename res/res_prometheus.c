@@ -316,10 +316,10 @@ int prometheus_metric_register(struct prometheus_metric *metric)
 	return 0;
 }
 
-void prometheus_metric_unregister(struct prometheus_metric *metric)
+int prometheus_metric_unregister(struct prometheus_metric *metric)
 {
 	if (!metric) {
-		return;
+		return -1;
 	}
 
 	{
@@ -353,7 +353,7 @@ void prometheus_metric_unregister(struct prometheus_metric *metric)
 					AST_VECTOR_INSERT_AT(&metrics, i, root);
 				}
 				prometheus_metric_free(existing);
-				return;
+				return 0;
 			}
 
 			/*
@@ -367,13 +367,15 @@ void prometheus_metric_unregister(struct prometheus_metric *metric)
 					if (prometheus_metric_cmp(child, metric)) {
 						AST_LIST_REMOVE_CURRENT(entry);
 						prometheus_metric_free(child);
-						return;
+						return 0;
 					}
 				}
 				AST_LIST_TRAVERSE_SAFE_END;
 			}
 		}
 	}
+
+	return -1;
 }
 
 void prometheus_metric_free(struct prometheus_metric *metric)

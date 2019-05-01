@@ -47,8 +47,9 @@ static void curl_free_wrapper(void *ptr)
 
 static void prometheus_metric_free_wrapper(void *ptr)
 {
-	prometheus_metric_unregister(ptr);
-	prometheus_metric_free(ptr);
+	if (prometheus_metric_unregister(ptr)) {
+		prometheus_metric_free(ptr);
+	}
 }
 
 #define GLOBAL_USERAGENT "asterisk-libcurl-agent/1.0"
