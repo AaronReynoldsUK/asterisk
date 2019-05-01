@@ -45,7 +45,7 @@
 						</para>
 					</note>
 				</description>
-				<configOption name="enabled" default="yes">
+				<configOption name="enabled" default="no">
 					<synopsis>Enable or disable Prometheus statistics.</synopsis>
 					<description>
 						<enumlist>
@@ -54,8 +54,62 @@
 						</enumlist>
 					</description>
 				</configOption>
+				<configOption name="core_metrics_enabled" default="yes">
+					<synopsis>Enable or disable core metrics.</synopsis>
+					<description>
+						<para>
+						Core metrics show various properties of the Asterisk system, including
+						how the binary was built, the version, uptime, last reload time, etc.
+						Generally, these options are harmless and should always be enabled.
+						This option mostly exists to disable output of all options for testing
+						purposes, as well as for those foolish souls who really don't care
+						what version of Asterisk they're running.
+						</para>
+						<enumlist>
+							<enum name="no" />
+							<enum name="yes" />
+						</enumlist>
+					</description>
+				</configOption>
 				<configOption name="uri" default="metrics">
 					<synopsis>The HTTP URI to serve metrics up on.</synopsis>
+				</configOption>
+				<configOption name="auth_username">
+					<synopsis>Username to use for Basic Auth.</synopsis>
+					<description>
+						<para>
+						If set, use Basic Auth to authenticate requests to the route
+						specified by <replaceable>uri</replaceable>. Note that you
+						will need to configure your Prometheus server with the
+						appropriate auth credentials.
+						</para>
+						<para>
+						If set, <replaceable>auth_password</replaceable> must also
+						be set appropriately.
+						</para>
+						<warning>
+							<para>
+							It is highly recommended to set up Basic Auth. Failure
+							to do so may result in useful information about your
+							Asterisk system being made easily scrapable by the
+							wide world. Consider yourself duly warned.
+							</para>
+						</warning>
+					</description>
+				</configOption>
+				<configOption name="auth_password">
+					<synopsis>Password to use for Basic Auth.</synopsis>
+					<description>
+						<para>
+						If set, this is used in conjunction with <replaceable>auth_username</replaceable>
+						to require Basic Auth for all requests to the Prometheus metrics. Note that
+						setting this without <replaceable>auth_username</replaceable> will not
+						do anything.
+						</para>
+					</description>
+				</configOption>
+				<configOption name="auth_realm" default="Asterisk Prometheus Metrics">
+					<synopsis>Auth realm used in challenge responses</synopsis>
 				</configOption>
 			</configObject>
 		</configFile>
@@ -105,9 +159,11 @@ struct aco_file prometheus_conf = {
 static AO2_GLOBAL_OBJ_STATIC(global_config);
 
 static void *module_config_alloc(void);
+static void prometheus_config_post_apply(void);
 /*! \brief Register information about the configs being processed by this module */
 CONFIG_INFO_STANDARD(cfg_info, global_config, module_config_alloc,
 	.files = ACO_FILES(&prometheus_conf),
+	.post_apply_config = prometheus_config_post_apply,
 );
 
 /**
@@ -430,8 +486,35 @@ static int http_callback(struct ast_tcptls_session_instance *ser,
 	const struct ast_http_uri *urih, const char *uri, enum ast_http_method method,
 	struct ast_variable *get_params, struct ast_variable *headers)
 {
-	struct ast_str *response = NULL;
+	RAII_VAR(struct module_config *, mod_cfg, ao2_global_obj_ref(global_config), ao2_cleanup);
+	RAII_VAR(struct ast_str *, response, NULL, ast_free);
 	int i;
+
+	/* If there is no module config or we're not enabled, we can't handle requests */
+	if (!mod_cfg || !mod_cfg->general->enabled) {
+		goto err503;
+	}
+
+	if (!ast_strlen_zero(mod_cfg->general->auth_username)) {
+		struct ast_http_auth *http_auth;
+
+		http_auth = ast_http_get_auth(headers);
+		if (!http_auth) {
+			goto err401;
+		}
+
+		if (strcmp(http_auth->userid, mod_cfg->general->auth_username)) {
+			ast_debug(5, "Invalid username provided for auth request: %s\n", http_auth->userid);
+			goto err401;
+		}
+
+		if (strcmp(http_auth->password, mod_cfg->general->auth_password)) {
+			ast_debug(5, "Invalid password provided for auth request: %s\n", http_auth->password);
+			goto err401;
+		}
+
+		ao2_ref(http_auth, -1);
+	}
 
 	response = ast_str_create(512);
 	if (!response) {
@@ -472,10 +555,26 @@ static int http_callback(struct ast_tcptls_session_instance *ser,
 
 	return 0;
 
+err401:
+	{
+		struct ast_str *auth_challenge_headers;
+
+		auth_challenge_headers = ast_str_create(128);
+		if (!auth_challenge_headers) {
+			goto err500;
+		}
+		ast_str_append(&auth_challenge_headers, 0,
+			"WWW-Authenticate: Basic realm=\"%s\"\r\n",
+			mod_cfg->general->auth_realm);
+		/* ast_http_send takes ownership of the ast_str */
+		ast_http_send(ser, method, 401, "Unauthorized", auth_challenge_headers, NULL, 0, 1);
+	}
+	return 0;
 err500:
 	ast_http_send(ser, method, 500, "Server Error", NULL, NULL, 0, 1);
-	ast_free(response);
-
+	return 0;
+err503:
+	ast_http_send(ser, method, 503, "Service Unavailable", NULL, NULL, 0, 1);
 	return 0;
 }
 
@@ -552,12 +651,22 @@ static void *module_config_alloc(void)
 
 static struct ast_http_uri prometheus_uri = {
 	.description = "Prometheus Metrics URI",
-	.uri = "metrics",
 	.callback = http_callback,
 	.has_subtree = 1,
 	.data = NULL,
 	.key = __FILE__,
 };
+
+static void prometheus_config_post_apply(void)
+{
+	RAII_VAR(struct module_config *, mod_cfg, ao2_global_obj_ref(global_config), ao2_cleanup);
+
+	/* We can get away with this as the lifetime of the URI
+	 * registered with the HTTP core is contained within
+	 * the lifetime of the module configuration
+	 */
+	prometheus_uri.uri = mod_cfg->general->uri;
+}
 
 static int unload_module(void)
 {
@@ -574,6 +683,27 @@ static int unload_module(void)
 	AST_VECTOR_FREE(&metrics);
 
 	aco_info_destroy(&cfg_info);
+	ao2_global_obj_release(global_config);
+
+	return 0;
+}
+
+static int reload_module(void) {
+	SCOPED_MUTEX(lock, &metrics_lock);
+
+	/* A reload may change the URI that we are queried on. As a result,
+	 * hold the metrics lock during a reload to prevent scraping, then
+	 * unlink / link the URI after the reload. The post-apply callback
+	 * on the configuration reload should set the URI appropriately.
+	 */
+	ast_http_uri_unlink(&prometheus_uri);
+	if (aco_process_config(&cfg_info, 1) == ACO_PROCESS_ERROR) {
+		return -1;
+	}
+	if (ast_http_uri_link(&prometheus_uri)) {
+		ast_log(AST_LOG_WARNING, "Failed to re-register Prometheus Metrics URI during reload\n");
+		return -1;
+	}
 
 	return 0;
 }
@@ -583,6 +713,15 @@ static int load_module(void)
 	SCOPED_MUTEX(lock, &metrics_lock);
 
 	if (aco_info_init(&cfg_info)) {
+		goto cleanup;
+	}
+	aco_option_register(&cfg_info, "enabled", ACO_EXACT, global_options, "no", OPT_BOOL_T, 1, FLDSET(struct prometheus_general_config, enabled));
+	aco_option_register(&cfg_info, "core_metrics_enabled", ACO_EXACT, global_options, "yes", OPT_BOOL_T, 1, FLDSET(struct prometheus_general_config, core_metrics_enabled));
+	aco_option_register(&cfg_info, "uri", ACO_EXACT, global_options, "", OPT_STRINGFIELD_T, 1, STRFLDSET(struct prometheus_general_config, uri));
+	aco_option_register(&cfg_info, "auth_username", ACO_EXACT, global_options, "", OPT_STRINGFIELD_T, 0, STRFLDSET(struct prometheus_general_config, auth_username));
+	aco_option_register(&cfg_info, "auth_password", ACO_EXACT, global_options, "", OPT_STRINGFIELD_T, 0, STRFLDSET(struct prometheus_general_config, auth_password));
+	aco_option_register(&cfg_info, "auth_realm", ACO_EXACT, global_options, "Asterisk Prometheus Metrics", OPT_STRINGFIELD_T, 0, STRFLDSET(struct prometheus_general_config, auth_realm));
+	if (aco_process_config(&cfg_info, 0) == ACO_PROCESS_ERROR) {
 		goto cleanup;
 	}
 
@@ -609,5 +748,6 @@ AST_MODULE_INFO(ASTERISK_GPL_KEY, AST_MODFLAG_GLOBAL_SYMBOLS | AST_MODFLAG_LOAD_
 	.support_level = AST_MODULE_SUPPORT_EXTENDED,
 	.load = load_module,
 	.unload = unload_module,
+	.reload = reload_module,
 	.load_pri = AST_MODPRI_DEFAULT,
 );

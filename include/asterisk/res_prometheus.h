@@ -69,9 +69,17 @@
 struct prometheus_general_config {
 	/*! \brief Whether or not the module is enabled */
 	unsigned int enabled;
-	/*! \brief The HTTP URI we register ourselves to */
+	/*! \brief Whether or not core metrics are enabled */
+	unsigned int core_metrics_enabled;
 	AST_DECLARE_STRING_FIELDS(
+		/*! \brief The HTTP URI we register ourselves to */
 		AST_STRING_FIELD(uri);
+		/*! \brief Auth username for Basic Auth */
+		AST_STRING_FIELD(auth_username);
+		/*! \brief Auth password for Basic Auth */
+		AST_STRING_FIELD(auth_password);
+		/*! \brief Auth realm */
+		AST_STRING_FIELD(auth_realm);
 	);
 };
 
