@@ -537,13 +537,34 @@ static int process_config(int reload)
 	return 0;
 }
 
+struct prometheus_general_config *module_config;
+
 static int test_init_cb(struct ast_test_info *info, struct ast_test *test)
 {
+	struct prometheus_general_config *new_module_config;
+
+	new_module_config = prometheus_general_config_alloc();
+	if (!new_module_config) {
+		return -1;
+	}
+
+	/* Disable core metrics by default */
+	new_module_config->core_metrics_enabled = 0;
+
+	module_config = prometheus_general_config_get();
+	prometheus_general_config_set(new_module_config);
+
+	/* Allow the module to own the ref */
+	ao2_ref(new_module_config, -1);
+
 	return 0;
 }
 
 static int test_cleanup_cb(struct ast_test_info *info, struct ast_test *test)
 {
+	prometheus_general_config_set(module_config);
+	ao2_cleanup(module_config);
+
 	return 0;
 }
 
