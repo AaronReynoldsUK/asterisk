@@ -110,6 +110,7 @@ AST_TEST_DEFINE(metric_values)
 		"test_counter_two",
 		"A test counter",
 		metric_values_get_counter_value_cb);
+	enum ast_test_result_state result = AST_TEST_PASS;
 
 	switch (cmd) {
 	case TEST_INIT:
@@ -128,10 +129,6 @@ AST_TEST_DEFINE(metric_values)
 		break;
 	}
 
-	ast_test_validate(test, prometheus_metric_register(&test_counter_one) == 0);
-	ast_test_validate(test, prometheus_metric_register(&test_counter_two) == 0);
-	strcpy(test_counter_one.value, "1");
-
 	buffer = ast_str_create(128);
 	if (!buffer) {
 		return AST_TEST_FAIL;
@@ -139,29 +136,35 @@ AST_TEST_DEFINE(metric_values)
 
 	curl = get_curl_instance();
 	if (!curl) {
-		return AST_TEST_NOT_RUN;
+		return AST_TEST_FAIL;
 	}
+
+	ast_test_validate_cleanup(test, prometheus_metric_register(&test_counter_one) == 0, result, metric_values_cleanup);
+	ast_test_validate_cleanup(test, prometheus_metric_register(&test_counter_two) == 0, result, metric_values_cleanup);
+	strcpy(test_counter_one.value, "1");
 
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_string_callback);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 	res = curl_easy_perform(curl);
 	if (res != CURLE_OK) {
 		ast_test_status_update(test, "Failed to execute CURL: %d\n", res);
-		return AST_TEST_FAIL;
+		result = AST_TEST_FAIL;
+		goto metric_values_cleanup;
 	}
 
-	ast_test_validate(test, strcmp(ast_str_buffer(buffer),
+	ast_test_validate_cleanup(test, strcmp(ast_str_buffer(buffer),
 		"# HELP test_counter_one A test counter\n"
 		"# TYPE test_counter_one counter\n"
 		"test_counter_one 1\n"
 		"# HELP test_counter_two A test counter\n"
 		"# TYPE test_counter_two counter\n"
-		"test_counter_two 2\n") == 0);
+		"test_counter_two 2\n") == 0, result, metric_values_cleanup);
 
+metric_values_cleanup:
 	prometheus_metric_unregister(&test_counter_one);
 	prometheus_metric_unregister(&test_counter_two);
 
-	return AST_TEST_PASS;
+	return result;
 }
 
 static void prometheus_metric_callback(struct ast_str **output)
