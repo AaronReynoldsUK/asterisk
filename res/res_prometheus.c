@@ -124,6 +124,8 @@
 #include "asterisk/vector.h"
 #include "asterisk/http.h"
 #include "asterisk/config_options.h"
+#include "asterisk/ast_version.h"
+#include "asterisk/buildinfo.h"
 #include "asterisk/res_prometheus.h"
 
 AST_MUTEX_DEFINE_STATIC(metrics_lock);
@@ -167,6 +169,67 @@ CONFIG_INFO_STANDARD(cfg_info, global_config, module_config_alloc,
 	.pre_apply_config = prometheus_config_pre_apply,
 	.post_apply_config = prometheus_config_post_apply,
 );
+
+#define CORE_PROPERTIES_HELP "Asterisk instance properties. The value of this will always be 1."
+
+#define CORE_UPTIME_HELP "Asterisk instance uptime in seconds."
+
+#define CORE_LAST_RELOAD_HELP "Time since last Asterisk reload in seconds."
+
+#define CORE_METRICS_SCRAPE_TIME_HELP "Total time taken to collect metrics, in milliseconds"
+
+static void get_core_uptime_cb(struct prometheus_metric *metric)
+{
+	struct timeval now = ast_tvnow();
+	int64_t duration = ast_tvdiff_sec(now, ast_startuptime);
+
+	snprintf(metric->value, sizeof(metric->value), "%" PRIu64, duration);
+}
+
+static void get_last_reload_cb(struct prometheus_metric *metric)
+{
+	struct timeval now = ast_tvnow();
+	int64_t duration = ast_tvdiff_sec(now, ast_lastreloadtime);
+
+	snprintf(metric->value, sizeof(metric->value), "%" PRIu64, duration);
+}
+
+/*!
+ * \brief The scrap duration metric
+ *
+ * \details
+ * This metric is special in that it should never be registered.
+ * Instead, the HTTP callback function that walks the metrics will
+ * always populate this metric explicitly if core metrics
+ * are enabled.
+ */
+static struct prometheus_metric core_scrape_metric = PROMETHEUS_METRIC_STATIC_INITIALIZATION(
+	PROMETHEUS_METRIC_COUNTER,
+	"asterisk_core_scrape_time_ms",
+	CORE_METRICS_SCRAPE_TIME_HELP,
+	NULL);
+
+#define METRIC_CORE_PROPS_ARRAY_INDEX 0
+/*!
+ * \brief Core metrics to scrape
+ */
+static struct prometheus_metric core_metrics[] = {
+	PROMETHEUS_METRIC_STATIC_INITIALIZATION(
+		PROMETHEUS_METRIC_COUNTER,
+		"asterisk_core_properties",
+		CORE_PROPERTIES_HELP,
+		NULL),
+	PROMETHEUS_METRIC_STATIC_INITIALIZATION(
+		PROMETHEUS_METRIC_COUNTER,
+		"asterisk_core_uptime_seconds",
+		CORE_UPTIME_HELP,
+		get_core_uptime_cb),
+	PROMETHEUS_METRIC_STATIC_INITIALIZATION(
+		PROMETHEUS_METRIC_COUNTER,
+		"asterisk_core_last_reload_seconds",
+		CORE_LAST_RELOAD_HELP,
+		get_last_reload_cb),
+};
 
 /**
  * \internal
@@ -490,6 +553,8 @@ static int http_callback(struct ast_tcptls_session_instance *ser,
 {
 	RAII_VAR(struct module_config *, mod_cfg, ao2_global_obj_ref(global_config), ao2_cleanup);
 	struct ast_str *response = NULL;
+	struct timeval start;
+	struct timeval end;
 	int i;
 
 	/* If there is no module config or we're not enabled, we can't handle requests */
@@ -523,6 +588,10 @@ static int http_callback(struct ast_tcptls_session_instance *ser,
 		goto err500;
 	}
 
+	if (mod_cfg->general->core_metrics_enabled) {
+		start = ast_tvnow();
+	}
+
 	/* Process our callbacks */
 	ast_mutex_lock(&callbacks_lock);
 	for (i = 0; i < AST_VECTOR_SIZE(&callbacks); i++) {
@@ -551,6 +620,19 @@ static int http_callback(struct ast_tcptls_session_instance *ser,
 		prometheus_metric_to_string(metric, &response);
 		ast_mutex_unlock(&metric->lock);
 	}
+
+	if (mod_cfg->general->core_metrics_enabled) {
+		int64_t duration;
+
+		end = ast_tvnow();
+		duration = ast_tvdiff_ms(end, start);
+		snprintf(core_scrape_metric.value,
+			sizeof(core_scrape_metric.value),
+			"%" PRIu64,
+			duration);
+		prometheus_metric_to_string(&core_scrape_metric, &response);
+	}
+
 	ast_mutex_unlock(&metrics_lock);
 
 	ast_http_send(ser, method, 200, "OK", NULL, response, 0, 0);
@@ -693,12 +775,46 @@ static int prometheus_config_pre_apply(void)
 static void prometheus_config_post_apply(void)
 {
 	RAII_VAR(struct module_config *, mod_cfg, ao2_global_obj_ref(global_config), ao2_cleanup);
+	int i;
 
 	/* We can get away with this as the lifetime of the URI
 	 * registered with the HTTP core is contained within
 	 * the lifetime of the module configuration
 	 */
 	prometheus_uri.uri = mod_cfg->general->uri;
+
+	if (mod_cfg->general->core_metrics_enabled) {
+		char eid_str[32];
+		ast_eid_to_str(eid_str, sizeof(eid_str), &ast_eid_default);
+
+		PROMETHEUS_METRIC_SET_LABEL(&core_scrape_metric, 0, "eid", eid_str);
+
+		PROMETHEUS_METRIC_SET_LABEL(&core_metrics[METRIC_CORE_PROPS_ARRAY_INDEX],
+			1, "version", ast_get_version());
+		PROMETHEUS_METRIC_SET_LABEL(&core_metrics[METRIC_CORE_PROPS_ARRAY_INDEX],
+			2, "build_options", ast_get_build_opts());
+		PROMETHEUS_METRIC_SET_LABEL(&core_metrics[METRIC_CORE_PROPS_ARRAY_INDEX],
+			3, "build_date", ast_build_date);
+		PROMETHEUS_METRIC_SET_LABEL(&core_metrics[METRIC_CORE_PROPS_ARRAY_INDEX],
+			4, "build_os", ast_build_os);
+		PROMETHEUS_METRIC_SET_LABEL(&core_metrics[METRIC_CORE_PROPS_ARRAY_INDEX],
+			5, "build_kernel", ast_build_kernel);
+		PROMETHEUS_METRIC_SET_LABEL(&core_metrics[METRIC_CORE_PROPS_ARRAY_INDEX],
+			6, "build_host", ast_build_hostname);
+		snprintf(core_metrics[METRIC_CORE_PROPS_ARRAY_INDEX].value,
+			sizeof(core_metrics[METRIC_CORE_PROPS_ARRAY_INDEX].value),
+			"%d", 1);
+
+		for (i = 0; i < ARRAY_LEN(core_metrics); i++) {
+			PROMETHEUS_METRIC_SET_LABEL(&core_metrics[METRIC_CORE_PROPS_ARRAY_INDEX],
+				0, "eid", eid_str);
+			prometheus_metric_register(&core_metrics[i]);
+		}
+	} else {
+		for (i = 0; i < ARRAY_LEN(core_metrics); i++) {
+			prometheus_metric_unregister(&core_metrics[i]);
+		}
+	}
 }
 
 static int unload_module(void)
