@@ -152,6 +152,7 @@ AST_TEST_DEFINE(metric_values)
 		goto metric_values_cleanup;
 	}
 
+	ast_test_status_update(test, "Retrieved: %s\n", ast_str_buffer(buffer));
 	ast_test_validate_cleanup(test, strcmp(ast_str_buffer(buffer),
 		"# HELP test_counter_one A test counter\n"
 		"# TYPE test_counter_one counter\n"
@@ -224,6 +225,7 @@ AST_TEST_DEFINE(metric_callback_register)
 		return AST_TEST_FAIL;
 	}
 
+	ast_test_status_update(test, "Retrieved: %s\n", ast_str_buffer(buffer));
 	ast_test_validate(test, strcmp(ast_str_buffer(buffer),
 		"# HELP test_counter A test counter\n"
 		"# TYPE test_counter counter\n"
