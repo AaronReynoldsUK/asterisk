@@ -242,6 +242,7 @@ AST_TEST_DEFINE(metric_register)
 	RAII_VAR(struct prometheus_metric *, test_gauge_child_one, NULL, prometheus_metric_free_wrapper);
 	RAII_VAR(struct prometheus_metric *, test_gauge_child_two, NULL, prometheus_metric_free_wrapper);
 	RAII_VAR(struct prometheus_metric *, bad_metric, NULL, prometheus_metric_free_wrapper);
+	enum ast_test_result_state result;
 
 	switch (cmd) {
 	case TEST_INIT:
@@ -262,41 +263,41 @@ AST_TEST_DEFINE(metric_register)
 
 	ast_test_status_update(test, "Testing nominal registration\n");
 	ast_test_status_update(test, "-> Static metric\n");
-	ast_test_validate(test, prometheus_metric_register(&test_counter) == 0);
+	ast_test_validate_cleanup(test, prometheus_metric_register(&test_counter) == 0, result, metric_register_cleanup);
 	ast_test_status_update(test, "-> Malloc'd metric\n");
 	test_gauge = prometheus_gauge_create("test_gauge", "A test gauge");
 	ast_test_validate(test, test_gauge != NULL);
-	ast_test_validate(test, prometheus_metric_register(test_gauge) == 0);
-	ast_test_validate(test, prometheus_metric_registered_count() == 2);
+	ast_test_validate_cleanup(test, prometheus_metric_register(test_gauge) == 0, result, metric_register_cleanup);
+	ast_test_validate_cleanup(test, prometheus_metric_registered_count() == 2, result, metric_register_cleanup);
 
 	ast_test_status_update(test, "Testing nominal registration of child metrics\n");
 	test_gauge_child_one = prometheus_gauge_create("test_gauge", "A test gauge");
-	ast_test_validate(test, test_gauge_child_one != NULL);
+	ast_test_validate_cleanup(test, test_gauge_child_one != NULL, result, metric_register_cleanup);
 	PROMETHEUS_METRIC_SET_LABEL(test_gauge_child_one, 0, "key_one", "value_one");
 	PROMETHEUS_METRIC_SET_LABEL(test_gauge_child_one, 1, "key_two", "value_one");
 	test_gauge_child_two = prometheus_gauge_create("test_gauge", "A test gauge");
-	ast_test_validate(test, test_gauge_child_two != NULL);
+	ast_test_validate_cleanup(test, test_gauge_child_two != NULL, result, metric_register_cleanup);
 	PROMETHEUS_METRIC_SET_LABEL(test_gauge_child_two, 0, "key_one", "value_two");
 	PROMETHEUS_METRIC_SET_LABEL(test_gauge_child_two, 1, "key_two", "value_two");
-	ast_test_validate(test, prometheus_metric_register(test_gauge_child_one) == 0);
-	ast_test_validate(test, prometheus_metric_register(test_gauge_child_two) == 0);
-	ast_test_validate(test, prometheus_metric_registered_count() == 2);
-	ast_test_validate(test, test_gauge->children.first == test_gauge_child_one);
-	ast_test_validate(test, test_gauge->children.last == test_gauge_child_two);
+	ast_test_validate_cleanup(test, prometheus_metric_register(test_gauge_child_one) == 0, result, metric_register_cleanup);
+	ast_test_validate_cleanup(test, prometheus_metric_register(test_gauge_child_two) == 0, result, metric_register_cleanup);
+	ast_test_validate_cleanup(test, prometheus_metric_registered_count() == 2, result, metric_register_cleanup);
+	ast_test_validate_cleanup(test, test_gauge->children.first == test_gauge_child_one, result, metric_register_cleanup);
+	ast_test_validate_cleanup(test, test_gauge->children.last == test_gauge_child_two, result, metric_register_cleanup);
 
 	ast_test_status_update(test, "Testing name collisions\n");
 	bad_metric = prometheus_counter_create("test_counter", "A test counter");
-	ast_test_validate(test, bad_metric != NULL);
-	ast_test_validate(test, prometheus_metric_register(bad_metric) != 0);
+	ast_test_validate_cleanup(test, bad_metric != NULL, result, metric_register_cleanup);
+	ast_test_validate_cleanup(test, prometheus_metric_register(bad_metric) != 0, result, metric_register_cleanup);
 	prometheus_metric_free(bad_metric);
 	bad_metric = NULL;
 
 	ast_test_status_update(test, "Testing label collisions\n");
 	bad_metric = prometheus_gauge_create("test_gauge", "A test gauge");
-	ast_test_validate(test, bad_metric != NULL);
+	ast_test_validate_cleanup(test, bad_metric != NULL, result, metric_register_cleanup);
 	PROMETHEUS_METRIC_SET_LABEL(bad_metric, 0, "key_one", "value_one");
 	PROMETHEUS_METRIC_SET_LABEL(bad_metric, 1, "key_two", "value_one");
-	ast_test_validate(test, prometheus_metric_register(bad_metric) != 0);
+	ast_test_validate_cleanup(test, prometheus_metric_register(bad_metric) != 0, result, metric_register_cleanup);
 	prometheus_metric_free(bad_metric);
 	bad_metric = NULL;
 
@@ -304,20 +305,24 @@ AST_TEST_DEFINE(metric_register)
 	prometheus_metric_unregister(test_gauge_child_two);
 	test_gauge_child_two = NULL;
 
-	ast_test_validate(test, prometheus_metric_registered_count() == 2);
+	ast_test_validate_cleanup(test, prometheus_metric_registered_count() == 2, result, metric_register_cleanup);
 	prometheus_metric_unregister(test_gauge);
 	test_gauge = NULL;
 
-	ast_test_validate(test, prometheus_metric_registered_count() == 2);
+	ast_test_validate_cleanup(test, prometheus_metric_registered_count() == 2, result, metric_register_cleanup);
 	prometheus_metric_unregister(test_gauge_child_one);
 	test_gauge_child_one = NULL;
 
-	ast_test_validate(test, prometheus_metric_registered_count() == 1);
+	ast_test_validate_cleanup(test, prometheus_metric_registered_count() == 1, result, metric_register_cleanup);
 	prometheus_metric_unregister(&test_counter);
 
-	ast_test_validate(test, prometheus_metric_registered_count() == 0);
+	ast_test_validate_cleanup(test, prometheus_metric_registered_count() == 0, result, metric_register_cleanup);
 
 	return AST_TEST_PASS;
+
+metric_register_cleanup:
+	prometheus_metric_unregister(&test_counter);
+	return result;
 }
 
 AST_TEST_DEFINE(counter_to_string)
@@ -532,6 +537,16 @@ static int process_config(int reload)
 	return 0;
 }
 
+static int test_init_cb(struct ast_test_info *info, struct ast_test *test)
+{
+	return 0;
+}
+
+static int test_cleanup_cb(struct ast_test_info *info, struct ast_test *test)
+{
+	return 0;
+}
+
 static int reload_module(void)
 {
 	return process_config(1);
@@ -556,6 +571,9 @@ static int load_module(void)
 	if (process_config(0)) {
 		return AST_MODULE_LOAD_DECLINE;
 	}
+
+	ast_test_register_init(CATEGORY, &test_init_cb);
+	ast_test_register_cleanup(CATEGORY, &test_cleanup_cb);
 
 	AST_TEST_REGISTER(metric_values);
 	AST_TEST_REGISTER(metric_callback_register);
