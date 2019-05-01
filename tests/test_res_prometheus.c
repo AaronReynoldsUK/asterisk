@@ -535,7 +535,7 @@ static int process_config(int reload)
 
 	prefix = ast_config_option(config, "general", "prefix");
 
-	snprintf(server_uri, sizeof(server_uri), "http://%s:%s%s/metrics", bindaddr, bindport, S_OR(prefix, ""));
+	snprintf(server_uri, sizeof(server_uri), "http://%s:%s%s/test_metrics", bindaddr, bindport, S_OR(prefix, ""));
 
 	ast_config_destroy(config);
 
@@ -553,7 +553,9 @@ static int test_init_cb(struct ast_test_info *info, struct ast_test *test)
 		return -1;
 	}
 
-	/* Disable core metrics by default */
+	/* Set what we need on the config for most tests */
+	ast_string_field_set(new_module_config, uri, "test_metrics");
+	new_module_config->enabled = 1;
 	new_module_config->core_metrics_enabled = 0;
 
 	module_config = prometheus_general_config_get();
