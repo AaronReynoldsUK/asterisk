@@ -143,6 +143,7 @@ AST_TEST_DEFINE(metric_values)
 	ast_test_validate_cleanup(test, prometheus_metric_register(&test_counter_two) == 0, result, metric_values_cleanup);
 	strcpy(test_counter_one.value, "1");
 
+	ast_test_status_update(test, " -> CURLing request...\n");
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_string_callback);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 	res = curl_easy_perform(curl);
@@ -152,7 +153,7 @@ AST_TEST_DEFINE(metric_values)
 		goto metric_values_cleanup;
 	}
 
-	ast_test_status_update(test, "Retrieved: %s\n", ast_str_buffer(buffer));
+	ast_test_status_update(test, " -> Retrieved: %s\n", ast_str_buffer(buffer));
 	ast_test_validate_cleanup(test, strcmp(ast_str_buffer(buffer),
 		"# HELP test_counter_one A test counter\n"
 		"# TYPE test_counter_one counter\n"
@@ -217,6 +218,7 @@ AST_TEST_DEFINE(metric_callback_register)
 		return AST_TEST_NOT_RUN;
 	}
 
+	ast_test_status_update(test, " -> CURLing request...\n");
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_string_callback);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 	res = curl_easy_perform(curl);
@@ -225,7 +227,7 @@ AST_TEST_DEFINE(metric_callback_register)
 		return AST_TEST_FAIL;
 	}
 
-	ast_test_status_update(test, "Retrieved: %s\n", ast_str_buffer(buffer));
+	ast_test_status_update(test, " -> Retrieved: %s\n", ast_str_buffer(buffer));
 	ast_test_validate(test, strcmp(ast_str_buffer(buffer),
 		"# HELP test_counter A test counter\n"
 		"# TYPE test_counter counter\n"
@@ -355,7 +357,7 @@ AST_TEST_DEFINE(counter_to_string)
 		info->category = CATEGORY;
 		info->summary = "Test formatting of counters";
 		info->description =
-			"This test covers the formatting of printed counters\n";
+			"This test covers the formatting of printed counters";
 		return AST_TEST_NOT_RUN;
 	case TEST_EXECUTE:
 		break;
@@ -438,7 +440,7 @@ AST_TEST_DEFINE(gauge_to_string)
 		info->category = CATEGORY;
 		info->summary = "Test formatting of gauges";
 		info->description =
-			"This test covers the formatting of printed gauges\n";
+			"This test covers the formatting of printed gauges";
 		return AST_TEST_NOT_RUN;
 	case TEST_EXECUTE:
 		break;
