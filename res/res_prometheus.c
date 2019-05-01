@@ -128,11 +128,10 @@
 #include "asterisk/buildinfo.h"
 #include "asterisk/res_prometheus.h"
 
-AST_MUTEX_DEFINE_STATIC(metrics_lock);
+/*! \brief Lock that protects data structures during an HTTP scrape */
+AST_MUTEX_DEFINE_STATIC(scrape_lock);
 
 AST_VECTOR(, struct prometheus_metric *) metrics;
-
-AST_MUTEX_DEFINE_STATIC(callbacks_lock);
 
 AST_VECTOR(, struct prometheus_callback *) callbacks;
 
@@ -271,14 +270,14 @@ static int prometheus_metric_cmp(struct prometheus_metric *left,
 
 int prometheus_metric_registered_count(void)
 {
-	SCOPED_MUTEX(lock, &metrics_lock);
+	SCOPED_MUTEX(lock, &scrape_lock);
 
 	return AST_VECTOR_SIZE(&metrics);
 }
 
 int prometheus_metric_register(struct prometheus_metric *metric)
 {
-	SCOPED_MUTEX(lock, &metrics_lock);
+	SCOPED_MUTEX(lock, &scrape_lock);
 	int i;
 
 	for (i = 0; i < AST_VECTOR_SIZE(&metrics); i++) {
@@ -323,7 +322,7 @@ void prometheus_metric_unregister(struct prometheus_metric *metric)
 	}
 
 	{
-		SCOPED_MUTEX(lock, &metrics_lock);
+		SCOPED_MUTEX(lock, &scrape_lock);
 		int i;
 
 		ast_debug(3, "Removing metric '%s'\n", metric->name);
@@ -521,7 +520,7 @@ void prometheus_metric_to_string(struct prometheus_metric *metric,
 
 int prometheus_callback_register(struct prometheus_callback *callback)
 {
-	SCOPED_MUTEX(lock, &callbacks_lock);
+	SCOPED_MUTEX(lock, &scrape_lock);
 
 	AST_VECTOR_APPEND(&callbacks, callback);
 
@@ -530,7 +529,7 @@ int prometheus_callback_register(struct prometheus_callback *callback)
 
 void prometheus_callback_unregister(struct prometheus_callback *callback)
 {
-	SCOPED_MUTEX(lock, &callbacks_lock);
+	SCOPED_MUTEX(lock, &scrape_lock);
 	int i;
 
 	for (i = 0; i < AST_VECTOR_SIZE(&callbacks); i++) {
@@ -592,8 +591,7 @@ static int http_callback(struct ast_tcptls_session_instance *ser,
 		start = ast_tvnow();
 	}
 
-	/* Process our callbacks */
-	ast_mutex_lock(&callbacks_lock);
+	ast_mutex_lock(&scrape_lock);
 	for (i = 0; i < AST_VECTOR_SIZE(&callbacks); i++) {
 		struct prometheus_callback *callback = AST_VECTOR_GET(&callbacks, i);
 
@@ -603,9 +601,7 @@ static int http_callback(struct ast_tcptls_session_instance *ser,
 
 		callback->callback_fn(&response);
 	}
-	ast_mutex_unlock(&callbacks_lock);
 
-	ast_mutex_lock(&metrics_lock);
 	for (i = 0; i < AST_VECTOR_SIZE(&metrics); i++) {
 		struct prometheus_metric *metric = AST_VECTOR_GET(&metrics, i);
 
@@ -632,8 +628,7 @@ static int http_callback(struct ast_tcptls_session_instance *ser,
 			duration);
 		prometheus_metric_to_string(&core_scrape_metric, &response);
 	}
-
-	ast_mutex_unlock(&metrics_lock);
+	ast_mutex_unlock(&scrape_lock);
 
 	ast_http_send(ser, method, 200, "OK", NULL, response, 0, 0);
 
@@ -783,6 +778,10 @@ static void prometheus_config_post_apply(void)
 	 */
 	prometheus_uri.uri = mod_cfg->general->uri;
 
+	/* Re-register the core metrics */
+	for (i = 0; i < ARRAY_LEN(core_metrics); i++) {
+		prometheus_metric_unregister(&core_metrics[i]);
+	}
 	if (mod_cfg->general->core_metrics_enabled) {
 		char eid_str[32];
 		ast_eid_to_str(eid_str, sizeof(eid_str), &ast_eid_default);
@@ -806,20 +805,15 @@ static void prometheus_config_post_apply(void)
 			"%d", 1);
 
 		for (i = 0; i < ARRAY_LEN(core_metrics); i++) {
-			PROMETHEUS_METRIC_SET_LABEL(&core_metrics[METRIC_CORE_PROPS_ARRAY_INDEX],
-				0, "eid", eid_str);
+			PROMETHEUS_METRIC_SET_LABEL(&core_metrics[i], 0, "eid", eid_str);
 			prometheus_metric_register(&core_metrics[i]);
-		}
-	} else {
-		for (i = 0; i < ARRAY_LEN(core_metrics); i++) {
-			prometheus_metric_unregister(&core_metrics[i]);
 		}
 	}
 }
 
 static int unload_module(void)
 {
-	SCOPED_MUTEX(lock, &metrics_lock);
+	SCOPED_MUTEX(lock, &scrape_lock);
 	int i;
 
 	ast_http_uri_unlink(&prometheus_uri);
@@ -838,13 +832,8 @@ static int unload_module(void)
 }
 
 static int reload_module(void) {
-	SCOPED_MUTEX(lock, &metrics_lock);
+	SCOPED_MUTEX(lock, &scrape_lock);
 
-	/* A reload may change the URI that we are queried on. As a result,
-	 * hold the metrics lock during a reload to prevent scraping, then
-	 * unlink / link the URI after the reload. The post-apply callback
-	 * on the configuration reload should set the URI appropriately.
-	 */
 	ast_http_uri_unlink(&prometheus_uri);
 	if (aco_process_config(&cfg_info, 1) == ACO_PROCESS_ERROR) {
 		return -1;
@@ -859,7 +848,11 @@ static int reload_module(void) {
 
 static int load_module(void)
 {
-	SCOPED_MUTEX(lock, &metrics_lock);
+	SCOPED_MUTEX(lock, &scrape_lock);
+
+	if (AST_VECTOR_INIT(&metrics, 64)) {
+		goto cleanup;
+	}
 
 	if (aco_info_init(&cfg_info)) {
 		goto cleanup;
@@ -874,10 +867,6 @@ static int load_module(void)
 		goto cleanup;
 	}
 
-	if (AST_VECTOR_INIT(&metrics, 64)) {
-		goto cleanup;
-	}
-
 	if (ast_http_uri_link(&prometheus_uri)) {
 		goto cleanup;
 	}
@@ -886,8 +875,8 @@ static int load_module(void)
 
 cleanup:
 	ast_http_uri_unlink(&prometheus_uri);
-	AST_VECTOR_FREE(&metrics);
 	aco_info_destroy(&cfg_info);
+	AST_VECTOR_FREE(&metrics);
 
 	return AST_MODULE_LOAD_DECLINE;
 }
