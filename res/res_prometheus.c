@@ -159,10 +159,12 @@ struct aco_file prometheus_conf = {
 static AO2_GLOBAL_OBJ_STATIC(global_config);
 
 static void *module_config_alloc(void);
+static int prometheus_config_pre_apply(void);
 static void prometheus_config_post_apply(void);
 /*! \brief Register information about the configs being processed by this module */
 CONFIG_INFO_STANDARD(cfg_info, global_config, module_config_alloc,
 	.files = ACO_FILES(&prometheus_conf),
+	.pre_apply_config = prometheus_config_pre_apply,
 	.post_apply_config = prometheus_config_post_apply,
 );
 
@@ -660,6 +662,34 @@ static struct ast_http_uri prometheus_uri = {
 	.key = __FILE__,
 };
 
+/*!
+ * \brief Pre-apply callback for the config framework.
+ *
+ * This validates that required fields exist and are populated.
+ */
+static int prometheus_config_pre_apply(void)
+{
+	struct module_config *config = aco_pending_config(&cfg_info);
+
+	if (!config->general->enabled) {
+		/* If we're not enabled, we don't care about anything else */
+		return 0;
+	}
+
+	if (!ast_strlen_zero(config->general->auth_username)
+		&& ast_strlen_zero(config->general->auth_password)) {
+		ast_log(AST_LOG_ERROR, "'auth_username' set without a corresponding 'auth_password'\n");
+		return -1;
+	}
+
+	return 0;
+}
+
+/*!
+ * \brief Post-apply callback for the config framework.
+ *
+ * This sets any run-time information derived from the configuration
+ */
 static void prometheus_config_post_apply(void)
 {
 	RAII_VAR(struct module_config *, mod_cfg, ao2_global_obj_ref(global_config), ao2_cleanup);
