@@ -539,6 +539,11 @@ AST_TEST_DEFINE(config_general_enabled)
 
 	module_config->enabled = 0;
 
+	curl = get_curl_instance();
+	if (!curl) {
+		return AST_TEST_NOT_RUN;
+	}
+
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_string_callback);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 	res = curl_easy_perform(curl);
