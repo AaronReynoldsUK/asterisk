@@ -47,6 +47,7 @@ static void curl_free_wrapper(void *ptr)
 
 static void prometheus_metric_free_wrapper(void *ptr)
 {
+	prometheus_metric_unregister(ptr);
 	prometheus_metric_free(ptr);
 }
 
@@ -237,9 +238,9 @@ AST_TEST_DEFINE(metric_register)
 		"A test counter",
 		NULL);
 	RAII_VAR(struct prometheus_metric *, test_gauge, NULL, prometheus_metric_free_wrapper);
-	struct prometheus_metric *test_gauge_child_one;
-	struct prometheus_metric *test_gauge_child_two;
-	struct prometheus_metric *bad_metric;
+	RAII_VAR(struct prometheus_metric *, test_gauge_child_one, NULL, prometheus_metric_free_wrapper);
+	RAII_VAR(struct prometheus_metric *, test_gauge_child_two, NULL, prometheus_metric_free_wrapper);
+	RAII_VAR(struct prometheus_metric *, bad_metric, NULL, prometheus_metric_free_wrapper);
 
 	switch (cmd) {
 	case TEST_INIT:
@@ -287,6 +288,7 @@ AST_TEST_DEFINE(metric_register)
 	ast_test_validate(test, bad_metric != NULL);
 	ast_test_validate(test, prometheus_metric_register(bad_metric) != 0);
 	prometheus_metric_free(bad_metric);
+	bad_metric = NULL;
 
 	ast_test_status_update(test, "Testing label collisions\n");
 	bad_metric = prometheus_gauge_create("test_gauge", "A test gauge");
@@ -295,16 +297,23 @@ AST_TEST_DEFINE(metric_register)
 	PROMETHEUS_METRIC_SET_LABEL(bad_metric, 1, "key_two", "value_one");
 	ast_test_validate(test, prometheus_metric_register(bad_metric) != 0);
 	prometheus_metric_free(bad_metric);
+	bad_metric = NULL;
 
 	ast_test_status_update(test, "Testing removal of metrics\n");
 	prometheus_metric_unregister(test_gauge_child_two);
+	test_gauge_child_two = NULL;
+
 	ast_test_validate(test, prometheus_metric_registered_count() == 2);
 	prometheus_metric_unregister(test_gauge);
 	test_gauge = NULL;
+
 	ast_test_validate(test, prometheus_metric_registered_count() == 2);
 	prometheus_metric_unregister(test_gauge_child_one);
+	test_gauge_child_one = NULL;
+
 	ast_test_validate(test, prometheus_metric_registered_count() == 1);
 	prometheus_metric_unregister(&test_counter);
+
 	ast_test_validate(test, prometheus_metric_registered_count() == 0);
 
 	return AST_TEST_PASS;
@@ -365,7 +374,7 @@ AST_TEST_DEFINE(counter_to_string)
 
 AST_TEST_DEFINE(counter_create)
 {
-	struct prometheus_metric *metric;
+	RAII_VAR(struct prometheus_metric *, metric, NULL, prometheus_metric_free_wrapper);
 
 	switch (cmd) {
 	case TEST_INIT:
@@ -389,7 +398,6 @@ AST_TEST_DEFINE(counter_create)
 	ast_test_validate(test, !strcmp(metric->value, ""));
 	ast_test_validate(test, metric->children.first == NULL);
 	ast_test_validate(test, metric->children.last == NULL);
-	prometheus_metric_free(metric);
 
 	return AST_TEST_PASS;
 }

@@ -194,7 +194,7 @@ static void get_last_reload_cb(struct prometheus_metric *metric)
 }
 
 /*!
- * \brief The scrap duration metric
+ * \brief The scrape duration metric
  *
  * \details
  * This metric is special in that it should never be registered.
@@ -202,11 +202,12 @@ static void get_last_reload_cb(struct prometheus_metric *metric)
  * always populate this metric explicitly if core metrics
  * are enabled.
  */
-static struct prometheus_metric core_scrape_metric = PROMETHEUS_METRIC_STATIC_INITIALIZATION(
-	PROMETHEUS_METRIC_COUNTER,
-	"asterisk_core_scrape_time_ms",
-	CORE_METRICS_SCRAPE_TIME_HELP,
-	NULL);
+static struct prometheus_metric core_scrape_metric =
+	PROMETHEUS_METRIC_STATIC_INITIALIZATION(
+		PROMETHEUS_METRIC_COUNTER,
+		"asterisk_core_scrape_time_ms",
+		CORE_METRICS_SCRAPE_TIME_HELP,
+		NULL);
 
 #define METRIC_CORE_PROPS_ARRAY_INDEX 0
 /*!
