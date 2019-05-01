@@ -596,9 +596,6 @@ static int load_module(void)
 		return AST_MODULE_LOAD_DECLINE;
 	}
 
-	ast_test_register_init(CATEGORY, &test_init_cb);
-	ast_test_register_cleanup(CATEGORY, &test_cleanup_cb);
-
 	AST_TEST_REGISTER(metric_values);
 	AST_TEST_REGISTER(metric_callback_register);
 	AST_TEST_REGISTER(metric_register);
@@ -607,6 +604,9 @@ static int load_module(void)
 	AST_TEST_REGISTER(counter_create);
 	AST_TEST_REGISTER(gauge_to_string);
 	AST_TEST_REGISTER(gauge_create);
+
+	ast_test_register_init(CATEGORY, &test_init_cb);
+	ast_test_register_cleanup(CATEGORY, &test_cleanup_cb);
 
 	return AST_MODULE_LOAD_SUCCESS;
 }
