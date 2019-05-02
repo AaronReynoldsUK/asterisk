@@ -56,6 +56,23 @@ static void prometheus_metric_free_wrapper(void *ptr)
 
 #define GLOBAL_USERAGENT "asterisk-libcurl-agent/1.0"
 
+static struct prometheus_general_config *config_alloc(void)
+{
+	struct prometheus_general_config *config;
+
+	config = prometheus_general_config_alloc();
+	if (!config) {
+		return NULL;
+	}
+
+	/* Set what we need on the config for most tests */
+	ast_string_field_set(config, uri, "test_metrics");
+	config->enabled = 1;
+	config->core_metrics_enabled = 0;
+
+	return config;
+}
+
 static CURL *get_curl_instance(void)
 {
 	CURL *curl;
@@ -502,6 +519,11 @@ AST_TEST_DEFINE(gauge_create)
 
 AST_TEST_DEFINE(config_general_basic_auth)
 {
+	RAII_VAR(CURL *, curl, NULL, curl_free_wrapper);
+	struct prometheus_general_config *config;
+	int res;
+	long response_code;
+
 	switch (cmd) {
 	case TEST_INIT:
 		info->name = __func__;
@@ -514,13 +536,64 @@ AST_TEST_DEFINE(config_general_basic_auth)
 		break;
 	}
 
-	return AST_TEST_NOT_RUN;
+	config = config_alloc();
+	if (!config) {
+		return AST_TEST_NOT_RUN;
+	}
+	ast_string_field_set(config, auth_username, "foo");
+	ast_string_field_set(config, auth_password, "bar");
+	/* Prometheus module owns the ref after this call */
+	prometheus_general_config_set(config);
+	ao2_ref(config, -1);
+
+	curl = get_curl_instance();
+	if (!curl) {
+		return AST_TEST_NOT_RUN;
+	}
+
+	ast_test_status_update(test, "Testing without auth credentials\n");
+	ast_test_status_update(test, " -> CURLing request...\n");
+	res = curl_easy_perform(curl);
+	if (res != CURLE_OK) {
+		ast_test_status_update(test, "Failed to execute CURL: %d\n", res);
+		return AST_TEST_FAIL;
+	}
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+	ast_test_status_update(test, " -> CURL returned %ld\n", response_code);
+	ast_test_validate(test, response_code == 401);
+
+	ast_test_status_update(test, "Testing with invalid auth credentials\n");
+	ast_test_status_update(test, " -> CURLing request...\n");
+	curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_ANY);
+	curl_easy_setopt(curl, CURLOPT_USERPWD, "matt:jordan");
+	res = curl_easy_perform(curl);
+	if (res != CURLE_OK) {
+		ast_test_status_update(test, "Failed to execute CURL: %d\n", res);
+		return AST_TEST_FAIL;
+	}
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+	ast_test_status_update(test, " -> CURL returned %ld\n", response_code);
+	ast_test_validate(test, response_code == 401);
+
+	ast_test_status_update(test, "Testing with valid auth credentials\n");
+	ast_test_status_update(test, " -> CURLing request...\n");
+	curl_easy_setopt(curl, CURLOPT_USERPWD, "foo:bar");
+	res = curl_easy_perform(curl);
+	if (res != CURLE_OK) {
+		ast_test_status_update(test, "Failed to execute CURL: %d\n", res);
+		return AST_TEST_FAIL;
+	}
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+	ast_test_status_update(test, " -> CURL returned %ld\n", response_code);
+	ast_test_validate(test, response_code == 200);
+
+	return AST_TEST_PASS;
 }
 
 AST_TEST_DEFINE(config_general_enabled)
 {
 	RAII_VAR(CURL *, curl, NULL, curl_free_wrapper);
-	RAII_VAR(struct ast_str *, buffer, NULL, ast_free);
+	struct prometheus_general_config *config;
 	int res;
 	long response_code;
 
@@ -537,21 +610,31 @@ AST_TEST_DEFINE(config_general_enabled)
 		break;
 	}
 
-	module_config->enabled = 0;
+	config = config_alloc();
+	if (!config) {
+		return AST_TEST_NOT_RUN;
+	}
+	config->enabled = 0;
+	prometheus_general_config_set(config);
+	/* Let the prometheus module own the config ref. Note
+	 * that the test cleanup callback will replace this config
+	 * with the true module config.
+	 */
+	ao2_ref(config, -1);
 
 	curl = get_curl_instance();
 	if (!curl) {
 		return AST_TEST_NOT_RUN;
 	}
 
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_string_callback);
-	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
+	ast_test_status_update(test, " -> CURLing request...\n");
 	res = curl_easy_perform(curl);
 	if (res != CURLE_OK) {
 		ast_test_status_update(test, "Failed to execute CURL: %d\n", res);
 		return AST_TEST_FAIL;
 	}
 	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+	ast_test_status_update(test, " -> CURL returned %ld\n", response_code);
 	ast_test_validate(test, response_code == 503);
 
 	return AST_TEST_PASS;
@@ -625,15 +708,10 @@ static int test_init_cb(struct ast_test_info *info, struct ast_test *test)
 {
 	struct prometheus_general_config *new_module_config;
 
-	new_module_config = prometheus_general_config_alloc();
+	new_module_config = config_alloc();
 	if (!new_module_config) {
 		return -1;
 	}
-
-	/* Set what we need on the config for most tests */
-	ast_string_field_set(new_module_config, uri, "test_metrics");
-	new_module_config->enabled = 1;
-	new_module_config->core_metrics_enabled = 0;
 
 	module_config = prometheus_general_config_get();
 	prometheus_general_config_set(new_module_config);
