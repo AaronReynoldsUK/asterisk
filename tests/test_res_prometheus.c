@@ -26,6 +26,7 @@
 #include "asterisk.h"
 
 #include <curl/curl.h>
+#include <regex.h>
 
 #include "asterisk/test.h"
 #include "asterisk/module.h"
@@ -615,11 +616,8 @@ AST_TEST_DEFINE(config_general_enabled)
 		return AST_TEST_NOT_RUN;
 	}
 	config->enabled = 0;
+	/* Prometheus module owns the ref after this call */
 	prometheus_general_config_set(config);
-	/* Let the prometheus module own the config ref. Note
-	 * that the test cleanup callback will replace this config
-	 * with the true module config.
-	 */
 	ao2_ref(config, -1);
 
 	curl = get_curl_instance();
@@ -642,6 +640,19 @@ AST_TEST_DEFINE(config_general_enabled)
 
 AST_TEST_DEFINE(config_general_core_metrics)
 {
+	RAII_VAR(CURL *, curl, NULL, curl_free_wrapper);
+	RAII_VAR(struct ast_str *, buffer, NULL, ast_free);
+	struct prometheus_general_config *config;
+	regex_t reg_props, reg_uptime, reg_last_reload, reg_scrape_time;
+	enum ast_test_result_state result = AST_TEST_FAIL;
+	char *regerr;
+	int res;
+
+#define ASTERISK_PROP_REGEX "asterisk_core_properties{eid=\".*\",version=\".*\",build_options=\".*\",build_date=\"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2} UTC\",build_os=\".*\",build_kernel=\".*\",build_host=\".*\"} 1"
+#define ASTERISK_UPTIME_REGEX "asterisk_core_uptime_seconds{eid=\".*\"} \\d+"
+#define ASTERISK_LAST_RELOAD_REGEX "asterisk_core_last_reload_seconds{eid=\".*\"} \\d+"
+#define ASTERISK_SCRAPE_REGEX "asterisk_core_scrape_time_ms{eid=\".*\"} \\d+"
+
 	switch (cmd) {
 	case TEST_INIT:
 		info->name = __func__;
@@ -655,7 +666,107 @@ AST_TEST_DEFINE(config_general_core_metrics)
 		break;
 	}
 
-	return AST_TEST_NOT_RUN;
+	config = config_alloc();
+	if (!config) {
+		return AST_TEST_NOT_RUN;
+	}
+	config->core_metrics_enabled = 1;
+	/* Prometheus module owns the ref after this call */
+	prometheus_general_config_set(config);
+	ao2_ref(config, -1);
+
+	curl = get_curl_instance();
+	if (!curl) {
+		return AST_TEST_NOT_RUN;
+	}
+
+	res = regcomp(&reg_props, ASTERISK_PROP_REGEX, REG_EXTENDED | REG_NOSUB);
+	if (res) {
+		regerr = ast_alloca(128);
+		regerror(res, &reg_props, regerr, 128);
+		ast_test_status_update(test, "Regular expression '%s' failed to compile: %s\n",
+			ASTERISK_PROP_REGEX, regerr);
+		goto config_general_core_metrics_exit;
+	}
+
+	res = regcomp(&reg_uptime, ASTERISK_UPTIME_REGEX, REG_EXTENDED | REG_NOSUB);
+	if (res) {
+		regerr = ast_alloca(128);
+		regerror(res, &reg_uptime, regerr, 128);
+		ast_test_status_update(test, "Regular expression '%s' failed to compile: %s\n",
+			ASTERISK_UPTIME_REGEX, regerr);
+		goto config_general_core_metrics_exit;
+	}
+
+	res = regcomp(&reg_last_reload, ASTERISK_LAST_RELOAD_REGEX, REG_EXTENDED | REG_NOSUB);
+	if (res) {
+		regerr = ast_alloca(128);
+		regerror(res, &reg_last_reload, regerr, 128);
+		ast_test_status_update(test, "Regular expression '%s' failed to compile: %s\n",
+			ASTERISK_LAST_RELOAD_REGEX, regerr);
+		goto config_general_core_metrics_exit;
+	}
+
+	res = regcomp(&reg_scrape_time, ASTERISK_SCRAPE_REGEX, REG_EXTENDED | REG_NOSUB);
+	if (res) {
+		regerr = ast_alloca(128);
+		regerror(res, &reg_scrape_time, regerr, 128);
+		ast_test_status_update(test, "Regular expression '%s' failed to compile: %s\n",
+			ASTERISK_SCRAPE_REGEX, regerr);
+		goto config_general_core_metrics_exit;
+	}
+
+	ast_test_status_update(test, " -> CURLing request...\n");
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_string_callback);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
+	res = curl_easy_perform(curl);
+	if (res != CURLE_OK) {
+		ast_test_status_update(test, "Failed to execute CURL: %d\n", res);
+		goto config_general_core_metrics_exit;
+	}
+	ast_test_status_update(test, " -> Retrieved: %s\n", ast_str_buffer(buffer));
+
+	ast_test_status_update(test, " -> Checking for core properties\n");
+	if (!regexec(&reg_props, ast_str_buffer(buffer), 0, NULL, 0)) {
+		ast_test_status_update(test, " -> Found core properties\n");
+	} else {
+		ast_test_status_update(test, " -> Failed to find core properties\n");
+		goto config_general_core_metrics_exit;
+	}
+
+	ast_test_status_update(test, " -> Checking for uptime\n");
+	if (!regexec(&reg_uptime, ast_str_buffer(buffer), 0, NULL, 0)) {
+		ast_test_status_update(test, " -> Found uptime\n");
+	} else {
+		ast_test_status_update(test, " -> Failed to find uptime\n");
+		goto config_general_core_metrics_exit;
+	}
+
+	ast_test_status_update(test, " -> Checking for last reload\n");
+	if (!regexec(&reg_last_reload, ast_str_buffer(buffer), 0, NULL, 0)) {
+		ast_test_status_update(test, " -> Found last reload\n");
+	} else {
+		ast_test_status_update(test, " -> Failed to find last reload\n");
+		goto config_general_core_metrics_exit;
+	}
+
+	ast_test_status_update(test, " -> Checking for scrape time\n");
+	if (!regexec(&reg_scrape_time, ast_str_buffer(buffer), 0, NULL, 0)) {
+		ast_test_status_update(test, " -> Found scrape time\n");
+	} else {
+		ast_test_status_update(test, " -> Failed to find scrape time\n");
+		goto config_general_core_metrics_exit;
+	}
+
+	result = AST_TEST_PASS;
+
+config_general_core_metrics_exit:
+	regfree(&reg_props);
+	regfree(&reg_uptime);
+	regfree(&reg_last_reload);
+	regfree(&reg_scrape_time);
+
+	return result;
 }
 
 static int process_config(int reload)
